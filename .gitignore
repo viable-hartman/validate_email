@@ -1,3 +1,9 @@
+# Ignore my personal test script
+test.py
+
+# Ignore created validationg DB
+validate_email.db
+
 *.pyc
 build
 dist

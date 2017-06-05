@@ -18,10 +18,18 @@
 # with the omission of the pattern components marked as "obsolete".
 
 import logging
+import pprint
 import os
+import sys
 import re
 import smtplib
 import socket
+
+# sqlite3 imports for looking up known MX servers.
+try:
+    import sqlite3
+except (ImportError, AttributeError):
+    pass
 
 try:
     import DNS
@@ -76,39 +84,82 @@ VALID_ADDRESS_REGEXP = '^' + ADDR_SPEC + '$'  # A valid address will match exact
 MX_DNS_CACHE = {}
 MX_CHECK_CACHE = {}
 
+# Set up the global logger to stdout
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.CRITICAL)
+ch = logging.StreamHandler(sys.stdout)
+ch.setLevel(logging.CRITICAL)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+ch.setFormatter(formatter)
+logger.addHandler(ch)
 
 
 def is_disposable(email, debug=False):
     """Indicate whether the email is known as being a disposable email or not"""
     email_domain = email.rsplit('@', 1)
     if email_domain in _disposable:
-        if debug:
-            logger.warn("Email %s is flagged as disposable (domain=%s)", email, domain)
+        logger.warn("Email %s is flagged as disposable (domain=%s)", email, domain)
         return True
     return False
 
 
-def get_mx_ip(hostname):
+def get_mx_ip(hostname, sql_conn=None):
+    logger.debug(u"Looking for MX Records for %s", hostname)
+    # If sql_conn defined first check if this is a known domain we have options for.
+    if sql_conn:
+        c = sql_conn.cursor()
+        logger.debug(u"Selecting from view")
+        c.execute('SELECT * FROM connectionView WHERE domain = ?', [(hostname)])
+        data = c.fetchone()
+        logger.debug(u"SQL DATA: %s", pprint.pformat(data, indent=4))
+        if data:
+            return {data[1]: {"domain": data[0], "username": data[2], "password": data[3], "is_ssl": data[4], "port": data[5]},}
+    
     if hostname not in MX_DNS_CACHE:
         try:
-            MX_DNS_CACHE[hostname] = DNS.mxlookup(hostname)
+            logger.debug(u"  ~~~~ get_mx_ip hostname not in MX_DNS_CACHE!!!")
+            # Store the DNS cache entry with same options as sql_conn cached item.
+            cache_item = {}
+            for mx in DNS.mxlookup(hostname):
+                # TODO: create way to discover if is_ssl (maybe check port(s) 465 and 587)
+                cache_item[mx[1]] = {"domain": hostname, "username": None, "password": None, "is_ssl": 0, "port": 25}
+            MX_DNS_CACHE[hostname] = cache_item
         except ServerError as e:
             if e.rcode == 3 or e.rcode == 2:  # NXDOMAIN (Non-Existent Domain) or SERVFAIL
                 MX_DNS_CACHE[hostname] = None
             else:
                 raise
 
+    logger.debug(u"  ~~~~ LOOKED UP %s!!!", MX_DNS_CACHE[hostname])
     return MX_DNS_CACHE[hostname]
+
+
+def check_command(result_tuple, server_name='server', ok_codes=None, debug=False):
+    status, mes = result_tuple
+    if not ok_codes:
+        ok_codes = [250]
+    if status not in ok_codes:
+        if debug:
+            logger.debug(u'%s answer: %s - %s', server_name, status, mes)
+        return False
+    return True
+
+
+def check_command_for_server(server_name):
+    def wrapper(*args, **kwargs):
+        kwargs['server_name'] = server_name
+        return check_command(*args, **kwargs)
+    return wrapper
 
 
 def validate_email(email,
                    check_mx=False,
                    verify=False,
                    debug=False,
-                   smtp_timeout=10,
+                   smtp_timeout=5,
                    allow_disposable=True,
-                   sending_email='',
+                   sending_email=None,
+                   sql_conn=None,
                    ):
     """Indicate whether the given string is a valid email address
     according to the 'addr-spec' portion of RFC 2822 (see section
@@ -118,10 +169,8 @@ def validate_email(email,
     general this should correctly identify any email address likely
     to be in use as of 2011."""
     if debug:
-        logger = logging.getLogger('validate_email')
         logger.setLevel(logging.DEBUG)
-    else:
-        logger = None
+        ch.setLevel(logging.DEBUG)
 
     try:
         assert re.match(VALID_ADDRESS_REGEXP, email) is not None
@@ -131,51 +180,68 @@ def validate_email(email,
 
         if check_mx:
             if not DNS:
-                raise Exception('For check the mx records or check if the email exists you must '
-                                'have installed pyDNS python package')
+                raise Exception('For checking the mx records or checking if the email exists you must have installed pyDNS python package')
             hostname = email[email.find('@') + 1:]
-            mx_hosts = get_mx_ip(hostname)
+            mx_hosts = get_mx_ip(hostname, sql_conn)
+            logger.debug(pprint.pformat(mx_hosts, indent=4))
             if mx_hosts is None:
                 return False
             for mx in mx_hosts:
                 try:
-                    if not verify and mx[1] in MX_CHECK_CACHE:
-                        return MX_CHECK_CACHE[mx[1]]
-                    smtp = smtplib.SMTP(timeout=smtp_timeout)
-                    smtp.connect(mx[1])
-                    MX_CHECK_CACHE[mx[1]] = True
+                    check = check_command_for_server(mx)
+                    if not verify and mx in MX_CHECK_CACHE:
+                        logger.debug(u"    ~~~ Returning from cache: %s", MX_CHECK_CACHE[mx])
+                        return MX_CHECK_CACHE[mx]
+                    
+                    if mx_hosts[mx]['is_ssl'] > 0:
+                        smtp = smtplib.SMTP_SSL(timeout=smtp_timeout)
+                        logger.debug(u"    ~~~ Connecting to: %s over SSL socket", mx)
+                    else:
+                        smtp = smtplib.SMTP(timeout=smtp_timeout)
+                        logger.debug(u"    ~~~ Connecting to: %s over standard socket", mx)
+
+                    smtp.connect(host=mx, port=mx_hosts[mx]['port'])
+
+                    if mx_hosts[mx]['username'] and mx_hosts[mx]['password']:  # Login is required.
+                        logger.debug(u"    ~~~ Logging Into: %s with user %s", mx, mx_hosts[mx]['username'])
+                        smtp.login(mx_hosts[mx]['username'], mx_hosts[mx]['password'])
+
+                    MX_CHECK_CACHE[mx] = True
+
+                    logger.debug(u"    ~~~ MX_CHECK_CACHE: %s VAL: %s", mx, MX_CHECK_CACHE[mx])
                     if not verify:
-                        try:
-                            smtp.quit()
-                        except smtplib.SMTPServerDisconnected:
-                            pass
                         return True
-                    status, _ = smtp.helo()
-                    if status != 250:
-                        smtp.quit()
-                        if debug:
-                            logger.debug(u'%s answer: %s - %s', mx[1], status, _)
+                    
+                    if not check(smtp.helo()):
+                        continue 
+
+                    # Properly set the mail from address.                    
+                    if mx_hosts[mx]['username']:
+                        sending_email = mx_hosts[mx]['username']
+                    elif not sending_email:
+                        sending_email = 'admin@%s' % (hostname)
+
+                    if not check(smtp.mail(sending_email)):
                         continue
-                    smtp.mail(sending_email)
-                    status, _ = smtp.rcpt(email)
-                    if status == 250:
-                        smtp.quit()
+                    
+                    # Checking RCPT
+                    if check(smtp.rcpt(email)):
                         return True
-                    if debug:
-                        logger.debug(u'%s answer: %s - %s', mx[1], status, _)
-                    smtp.quit()
-                except smtplib.SMTPServerDisconnected:  # Server not permits verify user
-                    if debug:
-                        logger.debug(u'%s disconected.', mx[1])
-                except smtplib.SMTPConnectError:
-                    if debug:
-                        logger.debug(u'Unable to connect to %s.', mx[1])
-            return None
+                except smtplib.SMTPServerDisconnected as ssd:  # Server not permits verify user
+                    logger.debug(u'%s disconected.', mx)
+                except smtplib.SMTPConnectError as sce:
+                    logger.debug(u'Unable to connect to %s.', mx)
+                finally:
+                    try:
+                        smtp.quit()
+                    except smtplib.SMTPServerDisconnected:
+                        pass
+ 
+            return None  # May want to return false here.
     except AssertionError:
         return False
     except (ServerError, socket.error) as e:
-        if debug:
-            logger.debug('ServerError or socket.error exception raised (%s).', e)
+        logger.debug('ServerError or socket.error exception raised (%s).', e)
         return None
     return True
 
@@ -572,7 +638,7 @@ def interactive_check():
 
         result = validate_email(email, mx, validate, debug=True, smtp_timeout=1,
                                 allow_disposable=disposable,
-                                sending_email=sending_email)
+                                sending_email=sending_email, sql_conn=None)
         if result:
             print("Valid!")
         elif result is None:

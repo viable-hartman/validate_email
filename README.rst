@@ -39,6 +39,27 @@ Check if the host has SMTP Server::
     is_valid = validate_email('example@example.com',check_mx=True)
 
 
+Set Up Debug Logging
+--------------------
+import logging
+import sys
+
+root = logging.getLogger("validate_email")
+root.setLevel(logging.DEBUG)
+
+ch = logging.StreamHandler(sys.stdout)
+ch.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+ch.setFormatter(formatter)
+root.addHandler(ch)
+
+from validate_email import validate_email
+is_valid = validate_email('wello7@yahoo.com',sending_email='hydration@yahoo.com',check_mx=True,debug=True) 
+print("MX CHECK: %s") % (is_valid)
+is_valid = validate_email('wello7@yahoo.com',sending_email='hydration@yahoo.com',verify=True,debug=True) 
+print("VERIFY: %s") % (is_valid)
+
+
 Verify email exists
 -------------------
 
