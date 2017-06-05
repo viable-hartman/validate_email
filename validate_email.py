@@ -31,15 +31,6 @@ try:
 except (ImportError, AttributeError):
     pass
 
-try:
-    import DNS
-
-    ServerError = DNS.ServerError
-    DNS.DiscoverNameServers()
-
-except (ImportError, AttributeError):
-    DNS = None
-
 
     class ServerError(Exception):
         pass
@@ -94,7 +85,7 @@ ch.setFormatter(formatter)
 logger.addHandler(ch)
 
 
-def is_disposable(email, debug=False):
+def is_disposable(email):
     """Indicate whether the email is known as being a disposable email or not"""
     email_domain = email.rsplit('@', 1)
     if email_domain in _disposable:
@@ -114,35 +105,41 @@ def get_mx_ip(hostname, sql_conn=None):
         logger.debug(u"SQL DATA: %s", pprint.pformat(data, indent=4))
         if data:
             return {data[1]: {"domain": data[0], "username": data[2], "password": data[3], "is_ssl": data[4], "port": data[5]},}
-    
+  
+    # Import dnspython 
+    from dns import resolver, exception
+    # Perform DNS lookup with dnspython if this isn't already in cache.
     if hostname not in MX_DNS_CACHE:
         try:
             logger.debug(u"  ~~~~ get_mx_ip hostname not in MX_DNS_CACHE!!!")
             # Store the DNS cache entry with same options as sql_conn cached item.
             cache_item = {}
-            for mx in DNS.mxlookup(hostname):
+            for mx in resolver.query(hostname, 'MX'):
+                server = mx.exchange.to_text(omit_final_dot=True)
                 # TODO: create way to discover if is_ssl (maybe check port(s) 465 and 587)
-                cache_item[mx[1]] = {"domain": hostname, "username": None, "password": None, "is_ssl": 0, "port": 25}
+                cache_item[server] = {"domain": hostname, "username": None, "password": None, "is_ssl": 0, "port": 25}
             MX_DNS_CACHE[hostname] = cache_item
-        except ServerError as e:
-            if e.rcode == 3 or e.rcode == 2:  # NXDOMAIN (Non-Existent Domain) or SERVFAIL
+        except exception.Timeout as e:
+            return False
+        except exception.DNSException as e:
+            if isinstance(e, resolver.NXDOMAIN):  # or e.rcode == 2:  # SERVFAIL
                 MX_DNS_CACHE[hostname] = None
             else:
-                raise
+                raise e
 
     logger.debug(u"  ~~~~ LOOKED UP %s!!!", MX_DNS_CACHE[hostname])
     return MX_DNS_CACHE[hostname]
 
 
-def check_command(result_tuple, server_name='server', ok_codes=None, debug=False):
+def check_command(result_tuple, server_name='server', ok_codes=[250], fail_codes=[550]):
     status, mes = result_tuple
-    if not ok_codes:
-        ok_codes = [250]
-    if status not in ok_codes:
-        if debug:
-            logger.debug(u'%s answer: %s - %s', server_name, status, mes)
+    if status in fail_codes:
+        logger.debug(u'%s in fail codes, answer: %s - %s', server_name, status, mes)
         return False
-    return True
+    if status in ok_codes:
+        logger.debug(u'%s in success codes, answer: %s - %s', server_name, status, mes)
+        return True
+    return None
 
 
 def check_command_for_server(server_name):
@@ -175,17 +172,17 @@ def validate_email(email,
     try:
         assert re.match(VALID_ADDRESS_REGEXP, email) is not None
         check_mx |= verify
-        if not allow_disposable and is_disposable(email, debug=debug):
+        if not allow_disposable and is_disposable(email):
             return False
 
         if check_mx:
-            if not DNS:
-                raise Exception('For checking the mx records or checking if the email exists you must have installed pyDNS python package')
             hostname = email[email.find('@') + 1:]
             mx_hosts = get_mx_ip(hostname, sql_conn)
             logger.debug(pprint.pformat(mx_hosts, indent=4))
-            if mx_hosts is None:
+            if mx_hosts is None:     # Implies DNS couldn't find MX records
                 return False
+            elif mx_hosts is False:  # Implies DNS timed out or failed.
+                return None
             for mx in mx_hosts:
                 try:
                     check = check_command_for_server(mx)
@@ -225,8 +222,13 @@ def validate_email(email,
                         continue
                     
                     # Checking RCPT
-                    if check(smtp.rcpt(email)):
+                    rcpt = check(smtp.rcpt(email))
+                    if rcpt:
                         return True
+                    elif rcpt is None:
+                        continue
+                    else:
+                        return False  # Implies 550 on rcpt was given.
                 except smtplib.SMTPServerDisconnected as ssd:  # Server not permits verify user
                     logger.debug(u'%s disconected.', mx)
                 except smtplib.SMTPConnectError as sce:
@@ -240,9 +242,13 @@ def validate_email(email,
             return None  # May want to return false here.
     except AssertionError:
         return False
-    except (ServerError, socket.error) as e:
-        logger.debug('ServerError or socket.error exception raised (%s).', e)
+    except socket.error as e:
+        logger.debug('socket.error exception raised (%s).', e)
         return None
+    except Exception as e:
+        logger.debug('Unknown exception raised (%s).', e)
+        return False
+
     return True
 
 

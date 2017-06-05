@@ -11,14 +11,22 @@ INSTALLATION
 
 First, you must do::
 
-    pip install validate_email
+    sudo python setup.py install
 
 Extra
 ------
 
-For check the domain mx and verify email exits you must have the `pyDNS` package installed::
+For check the domain mx and verify email exits you must have the `dnspython` package installed::
 
-    pip install pyDNS
+    pip install dnspython
+
+
+UNINSTALL
+=========
+
+    sudo python setup.py install --record files.txt
+    sudo bash -c 'cat files.txt | xargs rm -rf'
+    rm files.txt
 
 
 USAGE
@@ -90,7 +98,3 @@ https://github.com/martenson/disposable-email-domains/tree/4efb0b0ed43022a78abc7
     is_valid = validate_email("disposable@yopmail.com", allow_disposable=False)
     assert not is_valid
 
-
-TODOs and BUGS
-==============
-See: http://github.com/syrusakbary/validate_email/issues
