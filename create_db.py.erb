@@ -27,6 +27,7 @@ known_domains = [(1, 'gmail.com','Domain for addresses like example@gmail.com'),
                  (2, 'yahoo.com','Domain for addresses like example@yahoo.com'),
                  (3, 'hotmail.com','Domain for addresses like example@hotmail.com'),
                  (4, 'live.com','Domain for addresses like example@live.com'),
+                 (5, 'google.com','Domain for addresses registered to example@gmail.com'),
                 ]
 try:
     c.executemany('INSERT INTO known_domains VALUES (?,?,?)', known_domains)
@@ -53,9 +54,9 @@ c.execute('''CREATE TABLE IF NOT EXISTS creds
 
 # Populate the creds table with existing credential data.
 creds = [(0, 'No Auth Required', None, None, 'No Authentication / Authorization Required.'),
-         (1, 'VALID_GMAIL_ACCOUNT@gmail.com', 'VALID_PASS', None, 'Sending user for authenticating to Google services.'),
-         (2, 'VALID_YAHOO_ACCOUNT@yahoo.com', 'VALID_PASS', None, 'Sending user for authenticating to Yahoo services.'),
-         (3, 'VALID_LIVE_ACCOUNT@[hotmail|live].com', 'VALID_PASS', None, 'Sending user for authenticating to Windows Live/Hotmail services.'),
+         (1, '<%= ENV["GOOGLE_USER"] -%>', '<%= ENV["GOOGLE_PASS"] -%>', None, 'Sending user for authenticating to Google services.'),
+         (2, '<%= ENV["YAHOO_USER"] -%>', '<%= ENV["YAHOO_PASS"] -%>', None, 'Sending user for authenticating to Yahoo services.'),
+         (3, '<%= ENV["WLIVE_USER"] -%>', '<%= ENV["WLIVE_PASS"] -%>', None, 'Sending user for authenticating to Windows Live/Hotmail services.'),
         ]
 try:
     c.executemany('INSERT INTO creds VALUES (?,?,?,?,?)', creds)
@@ -80,6 +81,7 @@ conn_info = [(1, 1, 1, 1, 465),
              (2, 2, 2, 1, 465),
              (3, 3, 3, 1, 587),
              (4, 3, 3, 1, 587),
+             (5, 1, 1, 1, 465),
             ]
 try:
     c.executemany('INSERT INTO connections VALUES (?,?,?,?,?)', conn_info)

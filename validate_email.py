@@ -93,9 +93,7 @@ def is_disposable(email):
         return True
     return False
 
-
-def get_mx_ip(hostname, sql_conn=None):
-    logger.debug(u"Looking for MX Records for %s", hostname)
+def get_known_domain(hostname, sql_conn=None):
     # If sql_conn defined first check if this is a known domain we have options for.
     if sql_conn:
         c = sql_conn.cursor()
@@ -105,6 +103,14 @@ def get_mx_ip(hostname, sql_conn=None):
         logger.debug(u"SQL DATA: %s", pprint.pformat(data, indent=4))
         if data:
             return {data[1]: {"domain": data[0], "username": data[2], "password": data[3], "is_ssl": data[4], "port": data[5]},}
+    return None
+
+
+def get_mx_ip(hostname, sql_conn=None):
+    logger.debug(u"Looking for MX Records for %s", hostname)
+    known_domain = get_known_domain(hostname, sql_conn)
+    if known_domain:
+	return known_domain
   
     # Import dnspython 
     from dns import resolver, exception
@@ -116,6 +122,14 @@ def get_mx_ip(hostname, sql_conn=None):
             cache_item = {}
             for mx in resolver.query(hostname, 'MX'):
                 server = mx.exchange.to_text(omit_final_dot=True)
+                logger.debug(u"  ~~~~ get_mx_ip checking server %s!!!", server)
+                # Check if this domain maps to a known top level domain
+                topleveldomain = '.'.join(server.split('.')[-2:])
+                logger.debug(u"  ~~~~ get_mx_ip topleveldomain %s!!!", topleveldomain)
+                known_domain = get_known_domain(topleveldomain, sql_conn)
+                logger.debug(u"  ~~~~ get_mx_ip known_domain %s!!!", known_domain)
+                if known_domain:
+            	    return known_domain
                 # TODO: create way to discover if is_ssl (maybe check port(s) 465 and 587)
                 cache_item[server] = {"domain": hostname, "username": None, "password": None, "is_ssl": 0, "port": 25}
             MX_DNS_CACHE[hostname] = cache_item
@@ -192,10 +206,10 @@ def validate_email(email,
                     
                     if mx_hosts[mx]['is_ssl'] > 0:
                         smtp = smtplib.SMTP_SSL(timeout=smtp_timeout)
-                        logger.debug(u"    ~~~ Connecting to: %s over SSL socket", mx)
+                        logger.debug(u"    ~~~ Connecting to: %s:%s over SSL socket", mx, mx_hosts[mx]['port'])
                     else:
                         smtp = smtplib.SMTP(timeout=smtp_timeout)
-                        logger.debug(u"    ~~~ Connecting to: %s over standard socket", mx)
+                        logger.debug(u"    ~~~ Connecting to: %s:%s over standard socket", mx, mx_hosts[mx]['port'])
 
                     smtp.connect(host=mx, port=mx_hosts[mx]['port'])
 

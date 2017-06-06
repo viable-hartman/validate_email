@@ -1,5 +1,7 @@
-# Ignore my personal test script
+# Ignore my personal test files
 test.py
+.env
+create_db.py
 
 # Ignore created validationg DB
 validate_email.db

@@ -20,6 +20,21 @@ For check the domain mx and verify email exits you must have the `dnspython` pac
 
     pip install dnspython
 
+For locally stored database and known domain lookups you must install sqllite3 and create a database::
+
+    vi .env
+    export GOOGLE_USER=example@gmail.com
+    export GOOGLE_PASS=example_pass
+    export YAHOO_USER=example@yahoo.com
+    export YAHOO_PASS=example_pass
+    export WLIVE_USER=example@hotmail.com
+    export WLIVE_PASS=example_pass
+
+    pip install sqllite3
+    source .env
+    erb -T '-' create_db.py.erb > create_db.py
+    python create_db.py
+
 
 UNINSTALL
 =========
