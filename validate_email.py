@@ -93,7 +93,8 @@ def is_disposable(email):
         return True
     return False
 
-def get_known_domain(hostname, sql_conn=None):
+
+def get_known_domain(hostname, sql_conn=None, decrypt=None):
     # If sql_conn defined first check if this is a known domain we have options for.
     if sql_conn:
         c = sql_conn.cursor()
@@ -102,13 +103,22 @@ def get_known_domain(hostname, sql_conn=None):
         data = c.fetchone()
         logger.debug(u"SQL DATA: %s", pprint.pformat(data, indent=4))
         if data:
-            return {data[1]: {"domain": data[0], "username": data[2], "password": data[3], "is_ssl": data[4], "port": data[5]},}
+            # Decrypt username and password data if it exists.
+            username = data[2]
+            password = data[3]
+            if data[2] is not None:
+                if decrypt is not None:
+                    username = decrypt(data[2])
+            if data[3] is not None:
+                if decrypt is not None:
+                    password = decrypt(data[3])
+            return {data[1]: {"domain": data[0], "username": username, "password": password, "is_ssl": data[4], "port": data[5]},}
     return None
 
 
-def get_mx_ip(hostname, sql_conn=None):
+def get_mx_ip(hostname, sql_conn=None, decrypt=None):
     logger.debug(u"Looking for MX Records for %s", hostname)
-    known_domain = get_known_domain(hostname, sql_conn)
+    known_domain = get_known_domain(hostname, sql_conn, decrypt)
     if known_domain:
 	return known_domain
   
@@ -126,7 +136,7 @@ def get_mx_ip(hostname, sql_conn=None):
                 # Check if this domain maps to a known top level domain
                 topleveldomain = '.'.join(server.split('.')[-2:])
                 logger.debug(u"  ~~~~ get_mx_ip topleveldomain %s!!!", topleveldomain)
-                known_domain = get_known_domain(topleveldomain, sql_conn)
+                known_domain = get_known_domain(topleveldomain, sql_conn, decrypt)
                 logger.debug(u"  ~~~~ get_mx_ip known_domain %s!!!", known_domain)
                 if known_domain:
             	    return known_domain
@@ -171,6 +181,7 @@ def validate_email(email,
                    allow_disposable=True,
                    sending_email=None,
                    sql_conn=None,
+                   decrypt=None,
                    ):
     """Indicate whether the given string is a valid email address
     according to the 'addr-spec' portion of RFC 2822 (see section
@@ -191,7 +202,7 @@ def validate_email(email,
 
         if check_mx:
             hostname = email[email.find('@') + 1:]
-            mx_hosts = get_mx_ip(hostname, sql_conn)
+            mx_hosts = get_mx_ip(hostname, sql_conn, decrypt)
             logger.debug(pprint.pformat(mx_hosts, indent=4))
             if mx_hosts is None:     # Implies DNS couldn't find MX records
                 return False
@@ -259,9 +270,9 @@ def validate_email(email,
     except socket.error as e:
         logger.debug('socket.error exception raised (%s).', e)
         return None
-    except Exception as e:
-        logger.debug('Unknown exception raised (%s).', e)
-        return False
+    #except Exception as e:  # Removing catch all so I can catch unknown error in service code.
+    #    logger.debug('Unknown exception raised (%s).', e)
+    #    return False
 
     return True
 

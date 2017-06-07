@@ -1,6 +1,8 @@
 # Ignore my personal test files
 test.py
+decrypt_model.py
 .env
+.env.*
 create_db.py
 
 # Ignore created validationg DB
