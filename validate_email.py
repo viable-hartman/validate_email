@@ -109,16 +109,20 @@ def get_known_domain(hostname, sql_conn=None, decrypt=None):
             if data[2] is not None:
                 if decrypt is not None:
                     username = decrypt(data[2])
+                    logger.debug(u"Looked up username: %s", username)
             if data[3] is not None:
                 if decrypt is not None:
                     password = decrypt(data[3])
+                    logger.debug(u"Looked up password: %s", password)
             return {data[1]: {"domain": data[0], "username": username, "password": password, "is_ssl": data[4], "port": data[5]},}
+    logger.debug(u"RETURNING NONE")
     return None
 
 
 def get_mx_ip(hostname, sql_conn=None, decrypt=None):
     logger.debug(u"Looking for MX Records for %s", hostname)
     known_domain = get_known_domain(hostname, sql_conn, decrypt)
+    logger.debug(u"Results of first lookup: %s", pprint.pformat(known_doamin, indent=4))
     if known_domain:
 	return known_domain
   
@@ -137,6 +141,7 @@ def get_mx_ip(hostname, sql_conn=None, decrypt=None):
                 topleveldomain = '.'.join(server.split('.')[-2:])
                 logger.debug(u"  ~~~~ get_mx_ip topleveldomain %s!!!", topleveldomain)
                 known_domain = get_known_domain(topleveldomain, sql_conn, decrypt)
+                logger.debug(u"Results of second lookup: %s", pprint.pformat(known_doamin, indent=4))
                 logger.debug(u"  ~~~~ get_mx_ip known_domain %s!!!", known_domain)
                 if known_domain:
             	    return known_domain
